@@ -29,7 +29,7 @@ import kotlin.io.path.exists
  *   cache/<podcastId>/art-<imageId>.img  the stamped image
  *   cache/<podcastId>/art-<imageId>.meta.json
  */
-class ArtworkStore(dataDir: Path, private val http: HttpClient) {
+class ArtworkStore(dataDir: Path, private val http: HttpClient, private val transcoder: Transcoder) {
     private val log = LoggerFactory.getLogger(ArtworkStore::class.java)
     private val json = jacksonObjectMapper()
 
@@ -39,7 +39,9 @@ class ArtworkStore(dataDir: Path, private val http: HttpClient) {
     /** One artwork URL found in a feed. `channel` marks the podcast's main logo. */
     data class Entry(val url: String, val channel: Boolean = false)
 
-    data class ArtMeta(val url: String, val contentType: String)
+    // `stamp` records which overlay variant the cached image carries, so a
+    // transcode config change re-stamps it instead of serving a stale look.
+    data class ArtMeta(val url: String, val contentType: String, val stamp: String? = null)
 
     data class Artwork(val bytes: ByteArray, val contentType: String)
 
@@ -74,16 +76,38 @@ class ArtworkStore(dataDir: Path, private val http: HttpClient) {
         readIndex(podcastId).entries.find { it.value.channel }?.key
 
     /**
-     * Returns the stamped artwork, downloading the original and applying the
-     * "MIRROR" overlay on first request. If the image format can't be decoded
-     * (e.g. webp), the original is cached and served unmodified.
+     * The overlay this podcast's artwork should carry: red with the codec and
+     * bitrate for transcoded mirrors, the plain blue "MIRROR" otherwise.
      */
-    fun getOrCreate(podcastId: String, imageId: String, entry: Entry): Artwork {
+    private fun stampFor(podcast: PodcastConfig): MirrorOverlay.Stamp {
+        if (!transcoder.active(podcast)) {
+            return MirrorOverlay.Stamp(MirrorOverlay.BLUE, listOf("MIRROR"))
+        }
+        val settings = transcoder.settingsFor(podcast)
+        return MirrorOverlay.Stamp(
+            MirrorOverlay.RED,
+            listOf("MIRROR", "${settings.codec.uppercase()} ${settings.bitrateKbps}K"),
+        )
+    }
+
+    /**
+     * Returns the stamped artwork, downloading the original and applying the
+     * overlay on first request. A cached copy whose stamp no longer matches
+     * the podcast's transcode config is re-downloaded and re-stamped. If the
+     * image format can't be decoded (e.g. webp), the original is cached and
+     * served unmodified.
+     */
+    fun getOrCreate(podcast: PodcastConfig, imageId: String, entry: Entry): Artwork {
+        val podcastId = podcast.id
+        val stamp = stampFor(podcast)
         val lock = locks.computeIfAbsent("$podcastId/$imageId") { Any() }
         synchronized(lock) {
             if (imageFile(podcastId, imageId).exists() && metaFile(podcastId, imageId).exists()) {
                 val meta = json.readValue<ArtMeta>(metaFile(podcastId, imageId).toFile())
-                return Artwork(Files.readAllBytes(imageFile(podcastId, imageId)), meta.contentType)
+                if (meta.stamp == stamp.key()) {
+                    return Artwork(Files.readAllBytes(imageFile(podcastId, imageId)), meta.contentType)
+                }
+                log.info("[{}] artwork {} has an outdated stamp, re-creating", podcastId, imageId)
             }
 
             log.info("[{}] downloading artwork {} from {}", podcastId, imageId, entry.url)
@@ -94,7 +118,7 @@ class ArtworkStore(dataDir: Path, private val http: HttpClient) {
             }
             val original = response.body()
 
-            val stamped = MirrorOverlay.apply(original)
+            val stamped = MirrorOverlay.apply(original, stamp)
             val artwork = if (stamped != null) {
                 Artwork(stamped, "image/png")
             } else {
@@ -104,7 +128,9 @@ class ArtworkStore(dataDir: Path, private val http: HttpClient) {
 
             Files.createDirectories(dir(podcastId))
             Files.write(imageFile(podcastId, imageId), artwork.bytes)
-            json.writeValue(metaFile(podcastId, imageId).toFile(), ArtMeta(entry.url, artwork.contentType))
+            // The stamp key is recorded even when stamping failed, so an
+            // undecodable image isn't re-downloaded on every request.
+            json.writeValue(metaFile(podcastId, imageId).toFile(), ArtMeta(entry.url, artwork.contentType, stamp.key()))
             log.info("[{}] cached {} artwork {}", podcastId, if (stamped != null) "stamped" else "original", imageId)
             return artwork
         }
@@ -112,15 +138,22 @@ class ArtworkStore(dataDir: Path, private val http: HttpClient) {
 }
 
 /**
- * Stamps an image as a mirror copy: a blue border plus a blue band across the
- * lower part with "MIRROR" in white. All sizes scale with the image.
+ * Stamps an image as a mirror copy: a colored border plus a band across the
+ * lower part with one or more lines of white text. All sizes scale with the
+ * image. Blue "MIRROR" for plain mirrors; red with the codec and bitrate as
+ * a second line for transcoded ones.
  */
 object MirrorOverlay {
-    private val BLUE = Color(21, 87, 194)
-    private const val LABEL = "MIRROR"
+    val BLUE = Color(21, 87, 194)
+    val RED = Color(194, 33, 21)
+
+    data class Stamp(val color: Color, val lines: List<String>) {
+        /** Stable id stored in art meta, so config changes re-stamp cached art. */
+        fun key(): String = "${color.rgb}:${lines.joinToString("|")}"
+    }
 
     /** Returns the stamped image as PNG bytes, or null if the input can't be decoded. */
-    fun apply(originalBytes: ByteArray): ByteArray? {
+    fun apply(originalBytes: ByteArray, stamp: Stamp): ByteArray? {
         val source = try {
             ImageIO.read(ByteArrayInputStream(originalBytes))
         } catch (e: Exception) {
@@ -136,31 +169,34 @@ object MirrorOverlay {
             g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
             g.drawImage(source, 0, 0, null)
 
-            g.color = BLUE
+            g.color = stamp.color
             val border = maxOf(4, minOf(width, height) / 24)
             g.fillRect(0, 0, width, border)
             g.fillRect(0, height - border, width, border)
             g.fillRect(0, 0, border, height)
             g.fillRect(width - border, 0, border, height)
 
-            val bandHeight = maxOf(18, height / 6)
+            val lineHeight = maxOf(18, height / 6)
+            val bandHeight = lineHeight * stamp.lines.size
             val bandY = height * 3 / 4 - bandHeight / 2
             g.fillRect(0, bandY, width, bandHeight)
 
             g.color = Color.WHITE
-            var fontSize = bandHeight * 0.65
-            var font = Font(Font.SANS_SERIF, Font.BOLD, fontSize.toInt())
-            while (fontSize > 8 && g.getFontMetrics(font).stringWidth(LABEL) > width * 0.85) {
-                fontSize *= 0.9
-                font = Font(Font.SANS_SERIF, Font.BOLD, fontSize.toInt())
+            stamp.lines.forEachIndexed { lineIndex, line ->
+                var fontSize = lineHeight * 0.65
+                var font = Font(Font.SANS_SERIF, Font.BOLD, fontSize.toInt())
+                while (fontSize > 8 && g.getFontMetrics(font).stringWidth(line) > width * 0.85) {
+                    fontSize *= 0.9
+                    font = Font(Font.SANS_SERIF, Font.BOLD, fontSize.toInt())
+                }
+                g.font = font
+                val metrics = g.fontMetrics
+                g.drawString(
+                    line,
+                    (width - metrics.stringWidth(line)) / 2,
+                    bandY + lineIndex * lineHeight + (lineHeight + metrics.ascent - metrics.descent) / 2,
+                )
             }
-            g.font = font
-            val metrics = g.fontMetrics
-            g.drawString(
-                LABEL,
-                (width - metrics.stringWidth(LABEL)) / 2,
-                bandY + (bandHeight + metrics.ascent - metrics.descent) / 2,
-            )
         } finally {
             g.dispose()
         }

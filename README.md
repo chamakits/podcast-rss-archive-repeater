@@ -84,9 +84,12 @@ Subscribe to that in your podcatcher. Episode enclosure links inside the feed
 are rewritten to `/media/<key>/<podcast-id>/<episode-id>.mp3` automatically.
 
 Podcast artwork is rewritten to `/logo/<key>/<podcast-id>/<image-id>.png`,
-which serves the original art stamped with a blue border and a "MIRROR" band —
-so the mirror is easy to tell apart when it sits next to the original podcast
-in your podcatcher. Undecodable formats (e.g. webp) are served unstamped.
+which serves the original art stamped with a border and a "MIRROR" band — so
+the mirror is easy to tell apart when it sits next to the original podcast in
+your podcatcher. Plain mirrors are stamped blue; podcasts whose episodes are
+transcoded are stamped red with the codec and bitrate (e.g. "AAC 64K") as a
+second line. Changing the transcode config re-stamps cached artwork on the
+next request. Undecodable formats (e.g. webp) are served unstamped.
 
 ## Web UI (no key required — private network)
 

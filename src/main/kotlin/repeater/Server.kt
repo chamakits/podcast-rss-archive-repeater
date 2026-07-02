@@ -136,7 +136,7 @@ class Server(
             throw NotFoundResponse("Unknown image: $imageId")
         }
 
-        val art = artworkStore.getOrCreate(podcast.id, imageId, entry)
+        val art = artworkStore.getOrCreate(podcast, imageId, entry)
         ctx.contentType(art.contentType).result(art.bytes)
     }
 

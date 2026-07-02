@@ -76,7 +76,7 @@ fun main(args: Array<String>) {
     }
 
     val episodeStore = EpisodeStore(dataDir, http, transcoder)
-    val artworkStore = ArtworkStore(dataDir, http)
+    val artworkStore = ArtworkStore(dataDir, http, transcoder)
     val feedMirror = FeedMirror(http, episodeStore, artworkStore, transcoder)
 
     Server(configStore, feedMirror, episodeStore, artworkStore).start(configStore.config.port)
