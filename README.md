@@ -52,6 +52,13 @@ http://<host>:<port>/feed/<key>/<podcast-id>
 Subscribe to that in your podcatcher. Episode enclosure links inside the feed
 are rewritten to `/media/<key>/<podcast-id>/<episode-id>.mp3` automatically.
 
+## Web UI (no key required — private network)
+
+| Method | Path | What it does |
+|---|---|---|
+| GET | `/` | HTML list of podcasts. Pick a user by name to get copy-paste feed URLs for a podcatcher. |
+| GET | `/endpoints` | HTML reference of every endpoint. |
+
 ## Management API (no key required — private network)
 
 | Method | Path | What it does |

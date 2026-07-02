@@ -18,6 +18,10 @@ class Server(
     fun start(port: Int): Javalin {
         val app = Javalin.create()
 
+        // Browser-facing pages.
+        app.get("/", ::handleHomePage)
+        app.get("/endpoints") { it.html(Pages.endpoints()) }
+
         // Podcatcher-facing routes; the per-user key is part of the path.
         app.get("/feed/{key}/{podcastId}", ::handleFeed)
         app.get("/media/{key}/{podcastId}/{episodeFile}", ::handleMedia)
@@ -35,6 +39,29 @@ class Server(
         }
 
         return app.start(port)
+    }
+
+    // ---- browser-facing -----------------------------------------------
+
+    private fun handleHomePage(ctx: Context) {
+        // The service runs on a private network, so picking a user by name
+        // (no key needed) is deliberate convenience, not an oversight.
+        val selectedUser = ctx.queryParam("user")?.takeIf { it in configStore.userKeys }
+        val key = selectedUser?.let { configStore.userKeys[it] }
+        val base = baseUrl(ctx)
+
+        val rows = configStore.config.podcasts.map { podcast ->
+            val stats = episodeStore.cacheStats(podcast.id)
+            Pages.PodcastRow(
+                id = podcast.id,
+                title = podcast.title ?: podcast.id,
+                originUrl = podcast.url,
+                feedUrl = key?.let { "$base/feed/$it/${podcast.id}" },
+                cachedEpisodes = stats.episodeCount,
+                cachedBytes = stats.totalBytes,
+            )
+        }
+        ctx.html(Pages.podcastList(rows, configStore.userKeys.keys.sorted(), selectedUser))
     }
 
     // ---- podcatcher-facing ------------------------------------------------
