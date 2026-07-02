@@ -15,16 +15,15 @@ object Pages {
         val cachedBytes: Long,
     )
 
-    fun podcastList(rows: List<PodcastRow>, userNames: List<String>, selectedUser: String?): String {
-        val userLinks = userNames.joinToString(" ") { name ->
-            val marker = if (name == selectedUser) " class=\"selected\"" else ""
-            "<a$marker href=\"/?user=${esc(name)}\">${esc(name)}</a>"
-        }
-
-        val intro = if (selectedUser == null) {
-            "<p>Pick a user to get feed links you can paste into a podcatcher:</p>"
+    fun podcastList(rows: List<PodcastRow>, user: String?, key: String?): String {
+        val keyQuery = key?.let { "?key=${esc(it)}" } ?: ""
+        val intro = if (user == null) {
+            """
+            <p>Add <code>?key=&lt;your-key&gt;</code> to the URL of this page to get
+            feed links you can paste into a podcatcher.</p>
+            """.trimIndent()
         } else {
-            "<p>Feed links for <strong>${esc(selectedUser)}</strong> — paste one into your podcatcher:</p>"
+            "<p>Feed links for <strong>${esc(user)}</strong> — paste one into your podcatcher:</p>"
         }
 
         val cards = rows.joinToString("\n") { row ->
@@ -53,26 +52,78 @@ object Pages {
             "Podcasts",
             """
             <h1>Podcasts</h1>
-            <p class="users">Users: $userLinks</p>
             $intro
             $cards
-            <p class="footer"><a href="/endpoints">All REST endpoints of this service</a></p>
+            <p class="footer"><a href="/endpoints$keyQuery">All REST endpoints of this service</a></p>
             """.trimIndent()
         )
     }
 
-    fun endpoints(): String {
+    private data class Endpoint(val method: String, val path: String, val description: String, val tryIt: String)
+
+    fun endpoints(podcastIds: List<String>, key: String?): String {
+        val keyQuery = key?.let { "?key=${esc(it)}" } ?: ""
+
+        fun perPodcastLinks(urlFor: (String) -> String): String =
+            if (podcastIds.isEmpty()) "<em>no podcasts configured</em>"
+            else podcastIds.joinToString(" ") { id -> "<a href=\"${esc(urlFor(id))}\">${esc(id)}</a>" }
+
+        val feedLinks =
+            if (key == null) "<em>add ?key=&lt;your-key&gt; to this page to get links</em>"
+            else perPodcastLinks { "/feed/$key/$it" }
+
+        val archiveForm = """
+            <form onsubmit="return postArchive(this)">
+              <select name="podcastId">${podcastIds.joinToString("") { "<option>${esc(it)}</option>" }}</select>
+              <input name="episodeId" placeholder="episodeId" required>
+              <button>POST</button>
+            </form>
+        """.trimIndent()
+
         val rows = listOf(
-            Triple("GET", "/", "This UI. Add ?user=&lt;name&gt; for that user's feed links."),
-            Triple("GET", "/endpoints", "This page."),
-            Triple("GET", "/feed/{key}/{podcastId}", "Mirrored RSS feed. Subscribe to this in a podcatcher."),
-            Triple("GET", "/media/{key}/{podcastId}/{episodeId}.mp3", "Episode audio: served from the local cache, downloaded from the original source on first request."),
-            Triple("GET", "/api/podcasts", "JSON list of podcasts with cache stats. Add ?key=&lt;key&gt; to include mirrored feed URLs."),
-            Triple("GET", "/api/podcasts/{podcastId}/episodes", "JSON list of known episodes with their episodeId and cached state."),
-            Triple("POST", "/api/archive/{podcastId}/{episodeId}", "Move the cached copy to the archive directory; next download re-fetches from the original source."),
-            Triple("POST", "/api/reload", "Reload config.yaml without restarting (new podcasts, new users &rarr; new keys)."),
-        ).joinToString("\n") { (method, path, description) ->
-            "<tr><td><code>$method</code></td><td><code>$path</code></td><td>$description</td></tr>"
+            Endpoint(
+                "GET", "/",
+                "HTML list of podcasts. Add ?key=&lt;your-key&gt; to include your feed links.",
+                "<a href=\"/$keyQuery\">open</a>"
+            ),
+            Endpoint(
+                "GET", "/endpoints",
+                "This page. Also takes ?key=&lt;your-key&gt; to fill in the links below.",
+                "<a href=\"/endpoints$keyQuery\">open</a>"
+            ),
+            Endpoint(
+                "GET", "/feed/{key}/{podcastId}",
+                "Mirrored RSS feed. Subscribe to this in a podcatcher.",
+                feedLinks
+            ),
+            Endpoint(
+                "GET", "/media/{key}/{podcastId}/{episodeId}.mp3",
+                "Episode audio: served from the local cache, downloaded from the original source on first request.",
+                "<em>links are inside the mirrored feed (opening one downloads the episode)</em>"
+            ),
+            Endpoint(
+                "GET", "/api/podcasts",
+                "JSON list of podcasts with cache stats. Add ?key=&lt;key&gt; to include mirrored feed URLs.",
+                "<a href=\"/api/podcasts$keyQuery\">open</a>"
+            ),
+            Endpoint(
+                "GET", "/api/podcasts/{podcastId}/episodes",
+                "JSON list of known episodes with their episodeId and cached state.",
+                perPodcastLinks { "/api/podcasts/$it/episodes" }
+            ),
+            Endpoint(
+                "POST", "/api/archive/{podcastId}/{episodeId}",
+                "Move the cached copy to the archive directory; next download re-fetches from the original source. Get the episodeId from the episodes listing above.",
+                archiveForm
+            ),
+            Endpoint(
+                "POST", "/api/reload",
+                "Reload config.yaml without restarting (new podcasts, new users &rarr; new keys).",
+                "<button onclick=\"post('/api/reload')\">POST</button>"
+            ),
+        ).joinToString("\n") { endpoint ->
+            "<tr><td><code>${endpoint.method}</code></td><td><code>${endpoint.path}</code></td>" +
+                "<td>${endpoint.description}</td><td class=\"tryit\">${endpoint.tryIt}</td></tr>"
         }
 
         return page(
@@ -80,10 +131,11 @@ object Pages {
             """
             <h1>REST endpoints</h1>
             <table>
-              <tr><th>Method</th><th>Path</th><th>Description</th></tr>
+              <tr><th>Method</th><th>Path</th><th>Description</th><th>Try it</th></tr>
               $rows
             </table>
-            <p class="footer"><a href="/">Back to podcasts</a></p>
+            <pre id="result"></pre>
+            <p class="footer"><a href="/$keyQuery">Back to podcasts</a></p>
             """.trimIndent()
         )
     }
@@ -104,10 +156,14 @@ object Pages {
             .copyrow { display: flex; gap: 0.5rem; }
             .copyrow input { flex: 1; font-family: monospace; font-size: 0.85rem; padding: 0.35rem; }
             .copyrow button { padding: 0.35rem 0.9rem; cursor: pointer; }
-            .users a { margin-right: 0.6rem; }
-            .users a.selected { font-weight: bold; text-decoration: none; }
             table { border-collapse: collapse; width: 100%; }
             th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #ddd; vertical-align: top; }
+            .tryit a { margin-right: 0.5rem; white-space: nowrap; }
+            .tryit form { display: flex; gap: 0.3rem; flex-wrap: wrap; }
+            .tryit input { width: 9rem; }
+            .tryit em { color: #666; }
+            #result { background: #f6f6f6; padding: 0.6rem; white-space: pre-wrap; word-break: break-all; }
+            #result:empty { display: none; }
             .footer { margin-top: 1.5rem; }
           </style>
         </head>
@@ -122,6 +178,15 @@ object Pages {
             document.execCommand('copy');
             button.textContent = 'Copied!';
             setTimeout(() => button.textContent = 'Copy', 1500);
+          }
+          async function post(url) {
+            const response = await fetch(url, { method: 'POST' });
+            document.getElementById('result').textContent =
+              'POST ' + url + '\n' + response.status + ' ' + await response.text();
+          }
+          function postArchive(form) {
+            post('/api/archive/' + form.podcastId.value + '/' + form.episodeId.value.trim());
+            return false;
           }
         </script>
         </body>

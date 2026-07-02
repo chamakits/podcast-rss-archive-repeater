@@ -56,8 +56,8 @@ are rewritten to `/media/<key>/<podcast-id>/<episode-id>.mp3` automatically.
 
 | Method | Path | What it does |
 |---|---|---|
-| GET | `/` | HTML list of podcasts. Pick a user by name to get copy-paste feed URLs for a podcatcher. |
-| GET | `/endpoints` | HTML reference of every endpoint. |
+| GET | `/` | HTML list of podcasts. Add `?key=<your-key>` to get copy-paste feed URLs for a podcatcher. |
+| GET | `/endpoints` | HTML reference of every endpoint with clickable "try it" links. Also takes `?key=` to fill in feed links. |
 
 ## Management API (no key required — private network)
 

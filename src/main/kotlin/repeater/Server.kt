@@ -20,7 +20,7 @@ class Server(
 
         // Browser-facing pages.
         app.get("/", ::handleHomePage)
-        app.get("/endpoints") { it.html(Pages.endpoints()) }
+        app.get("/endpoints", ::handleEndpointsPage)
 
         // Podcatcher-facing routes; the per-user key is part of the path.
         app.get("/feed/{key}/{podcastId}", ::handleFeed)
@@ -44,10 +44,10 @@ class Server(
     // ---- browser-facing -----------------------------------------------
 
     private fun handleHomePage(ctx: Context) {
-        // The service runs on a private network, so picking a user by name
-        // (no key needed) is deliberate convenience, not an oversight.
-        val selectedUser = ctx.queryParam("user")?.takeIf { it in configStore.userKeys }
-        val key = selectedUser?.let { configStore.userKeys[it] }
+        // Same convention as /api/podcasts: feed URLs only appear when the
+        // caller already knows a valid key (?key=...).
+        val key = ctx.queryParam("key")?.takeIf { configStore.userForKey(it) != null }
+        val user = key?.let { configStore.userForKey(it) }
         val base = baseUrl(ctx)
 
         val rows = configStore.config.podcasts.map { podcast ->
@@ -61,7 +61,12 @@ class Server(
                 cachedBytes = stats.totalBytes,
             )
         }
-        ctx.html(Pages.podcastList(rows, configStore.userKeys.keys.sorted(), selectedUser))
+        ctx.html(Pages.podcastList(rows, user, key))
+    }
+
+    private fun handleEndpointsPage(ctx: Context) {
+        val key = ctx.queryParam("key")?.takeIf { configStore.userForKey(it) != null }
+        ctx.html(Pages.endpoints(configStore.config.podcasts.map { it.id }, key))
     }
 
     // ---- podcatcher-facing ------------------------------------------------
