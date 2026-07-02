@@ -24,9 +24,15 @@ class Server(
         app.get("/endpoints", ::handleEndpointsPage)
 
         // Podcatcher-facing routes; the per-user key is part of the path.
+        // HEAD is registered too: feed crawlers often probe with it, and
+        // Javalin would otherwise answer with an empty 200 text/plain.
+        // Jetty suppresses the response body for HEAD automatically.
         app.get("/feed/{key}/{podcastId}", ::handleFeed)
+        app.head("/feed/{key}/{podcastId}", ::handleFeed)
         app.get("/media/{key}/{podcastId}/{episodeFile}", ::handleMedia)
+        app.head("/media/{key}/{podcastId}/{episodeFile}", ::handleMedia)
         app.get("/logo/{key}/{podcastId}/{imageFile}", ::handleLogo)
+        app.head("/logo/{key}/{podcastId}/{imageFile}", ::handleLogo)
 
         // Management API. The server runs on a private network, so these are
         // open; only the podcatcher-facing routes require a key.
