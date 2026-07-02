@@ -62,6 +62,9 @@ class EpisodeStore(dataDir: Path, private val http: HttpClient) {
     /** One lock object per episode so concurrent clients trigger a single download. */
     private val downloadLocks = ConcurrentHashMap<String, Any>()
 
+    /** One lock per podcast for index read-merge-write cycles. */
+    private val indexLocks = ConcurrentHashMap<String, Any>()
+
     companion object {
         fun episodeId(originalUrl: String): String =
             MessageDigest.getInstance("SHA-256")
@@ -80,7 +83,18 @@ class EpisodeStore(dataDir: Path, private val http: HttpClient) {
 
     fun saveFeedCopy(podcastId: String, xml: ByteArray) {
         Files.createDirectories(podcastCacheDir(podcastId))
-        Files.write(feedFile(podcastId), xml)
+        writeAtomically(feedFile(podcastId)) { Files.write(it, xml) }
+    }
+
+    /**
+     * Writes to a temp file, then atomically renames onto the target, so
+     * concurrent readers always see either the old or the new complete file,
+     * never a half-written one.
+     */
+    private fun writeAtomically(target: Path, write: (Path) -> Unit) {
+        val temp = target.resolveSibling("${target.fileName}.tmp")
+        write(temp)
+        Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
     }
 
     fun cachedFeedCopy(podcastId: String): ByteArray? =
@@ -90,9 +104,12 @@ class EpisodeStore(dataDir: Path, private val http: HttpClient) {
 
     /** Merges new entries into the index so episodes that drop off the feed stay resolvable. */
     fun updateIndex(podcastId: String, entries: Map<String, IndexEntry>) {
-        Files.createDirectories(podcastCacheDir(podcastId))
-        val merged = readIndex(podcastId) + entries
-        json.writeValue(indexFile(podcastId).toFile(), merged)
+        val lock = indexLocks.computeIfAbsent(podcastId) { Any() }
+        synchronized(lock) {
+            Files.createDirectories(podcastCacheDir(podcastId))
+            val merged = readIndex(podcastId) + entries
+            writeAtomically(indexFile(podcastId)) { json.writeValue(it.toFile(), merged) }
+        }
     }
 
     fun readIndex(podcastId: String): Map<String, IndexEntry> {

@@ -92,6 +92,28 @@ archive/<podcast-id>/            archived copies (timestamped)
 Episode ids are a stable hash of the original enclosure URL, so restarts and
 feed refetches never change them.
 
+## Resource usage / running on small servers
+
+The start script caps the JVM at `-Xmx128m` with the serial GC (see
+`build.gradle.kts`); override via the `JAVA_OPTS` environment variable.
+Measured with those settings under a worst-case burst (4 concurrent feed
+mirrorings, artwork stamping, serving + re-downloading a 110 MB episode):
+
+- idle: ~150 MB RSS
+- peak under load: ~260 MB RSS
+- CPU: idle ~0; a burst like the above used ~10 s of CPU time
+
+A 512 MB instance runs it comfortably; 1 GB is roomy. Disk is the real
+constraint — every cached episode is ~50-150 MB, so size the disk (and prune
+the `cache/` and `archive/` directories) for your listening habits.
+
+To check usage on a live instance:
+
+```sh
+grep -E "VmRSS|VmHWM" /proc/$(pgrep -f repeater.MainKt)/status   # current / peak memory
+ps -o %cpu,cputime -p $(pgrep -f repeater.MainKt)                # CPU
+```
+
 ## Behavior when the origin is down
 
 - Feed requests fall back to the last saved copy of the original feed.

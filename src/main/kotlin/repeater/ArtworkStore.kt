@@ -15,6 +15,7 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import java.util.concurrent.ConcurrentHashMap
 import javax.imageio.ImageIO
 import kotlin.io.path.exists
@@ -48,8 +49,16 @@ class ArtworkStore(dataDir: Path, private val http: HttpClient) {
     private fun metaFile(podcastId: String, imageId: String) = dir(podcastId).resolve("art-$imageId.meta.json")
 
     fun updateIndex(podcastId: String, entries: Map<String, Entry>) {
-        Files.createDirectories(dir(podcastId))
-        json.writeValue(indexFile(podcastId).toFile(), readIndex(podcastId) + entries)
+        val lock = locks.computeIfAbsent("index/$podcastId") { Any() }
+        synchronized(lock) {
+            Files.createDirectories(dir(podcastId))
+            val merged = readIndex(podcastId) + entries
+            // Temp file + atomic rename so concurrent readers never see a
+            // half-written index.
+            val temp = indexFile(podcastId).resolveSibling("images.json.tmp")
+            json.writeValue(temp.toFile(), merged)
+            Files.move(temp, indexFile(podcastId), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        }
     }
 
     fun readIndex(podcastId: String): Map<String, Entry> {
