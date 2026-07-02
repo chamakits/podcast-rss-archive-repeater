@@ -31,9 +31,40 @@ podcasts:
 
 users:
   - name: alice
+
+# Optional: re-encode downloaded episodes to save disk space.
+# transcode:
+#   enabled: true
+#   codec: opus       # or aac (see below)
+#   bitrateKbps: 32
 ```
 
 Apply edits without restarting: `curl -X POST localhost:8080/api/reload`
+
+### Transcoding (`transcode:`)
+
+Off by default. When enabled, every newly downloaded episode is re-encoded
+with ffmpeg (must be on the PATH). This is a lossy step, but hard to hear
+at the right settings. Two codecs:
+
+- `codec: opus` — Opus in an Ogg container. Smallest: 32 kbps sounds like
+  a typical 128 kbps MP3 for speech (~60-75% smaller). Plays in gPodder,
+  AntennaPod and most podcatchers, but **not** in iOS/Apple Podcasts.
+- `codec: aac` — AAC-LC in an m4a container. Plays everywhere including
+  iOS. Needs `bitrateKbps: 64` for comparable speech quality, so expect
+  ~50% savings instead.
+
+Each podcast may carry its own `transcode:` block, which fully replaces the
+global one for that podcast. Mirroring the same origin URL under two ids
+(one plain, one transcoded) works fine — caches are per podcast id.
+Mirrored feeds advertise transcoded enclosures as `.opus`/`audio/ogg` or
+`.m4a`/`audio/mp4` accordingly.
+
+It degrades safely: if ffmpeg is missing, a transcode fails, or the result
+is not smaller than the original, the episode is cached in its original
+format instead. Already-cached episodes are never touched — only new
+downloads are affected, and each episode's true `Content-Type` is stored in
+its `.meta.json` and served back on `/media` requests.
 
 ### User keys
 
@@ -128,5 +159,6 @@ ps -o %cpu,cputime -p $(pgrep -f repeater.MainKt)                # CPU
 | `Config.kt` | `config.yaml` loading + user key generation |
 | `FeedMirror.kt` | Fetch origin feed, rewrite enclosure URLs |
 | `EpisodeStore.kt` | Download, cache, archive episodes (all file-based) |
+| `Transcoder.kt` | Optional Opus re-encode of downloads via ffmpeg |
 | `ArtworkStore.kt` | Download and cache artwork, stamp it with the MIRROR overlay |
 | `Server.kt` | HTTP routes (Javalin) |

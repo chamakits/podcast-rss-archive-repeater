@@ -16,10 +16,23 @@ private val EXAMPLE_CONFIG = """
     # By default links are built from the Host header of each request.
     # baseUrl: http://192.168.1.10:8080
 
+    # Optional: re-encode downloaded episodes to save disk space (typically
+    # 50-75% smaller). Requires ffmpeg on the PATH. Lossy but hard to hear
+    # at these settings; already-cached episodes are not touched.
+    # transcode:
+    #   enabled: true
+    #   codec: opus       # opus: smallest, most podcatchers (not iOS/Apple
+    #                     # Podcasts); aac: m4a, plays everywhere incl. iOS
+    #   bitrateKbps: 32   # 32 suits speech with opus; use 64+ for aac
+
     podcasts:
       # - id: my-show              # short unique id, used in URLs
       #   url: https://example.com/feed.xml
       #   title: My Favorite Show  # optional, for the /api/podcasts listing
+      #   transcode:               # optional per-podcast override
+      #     enabled: true
+      #     codec: aac
+      #     bitrateKbps: 64
 
     users:
       # The server generates a key per user into generated/user-keys.yaml.
@@ -55,9 +68,16 @@ fun main(args: Array<String>) {
         .connectTimeout(Duration.ofSeconds(20))
         .build()
 
-    val episodeStore = EpisodeStore(dataDir, http)
+    val transcoder = Transcoder(configStore)
+    val transcodeInUse = configStore.config.transcode.enabled ||
+        configStore.config.podcasts.any { it.transcode?.enabled == true }
+    if (transcodeInUse && transcoder.available()) {
+        log.info("Transcoding enabled: new episodes are re-encoded per the transcode config")
+    }
+
+    val episodeStore = EpisodeStore(dataDir, http, transcoder)
     val artworkStore = ArtworkStore(dataDir, http)
-    val feedMirror = FeedMirror(http, episodeStore, artworkStore)
+    val feedMirror = FeedMirror(http, episodeStore, artworkStore, transcoder)
 
     Server(configStore, feedMirror, episodeStore, artworkStore).start(configStore.config.port)
     log.info("Serving data dir {} on port {}", dataDir, configStore.config.port)

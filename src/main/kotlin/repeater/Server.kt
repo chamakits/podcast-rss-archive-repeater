@@ -108,7 +108,7 @@ class Server(
             throw NotFoundResponse("Unknown episode: $episodeId")
         }
 
-        val episode = episodeStore.getOrDownload(podcast.id, episodeId, entry)
+        val episode = episodeStore.getOrDownload(podcast, episodeId, entry)
         log.info(
             "[{}] serving episode {} ('{}') to user '{}' from {}",
             podcast.id, episodeId, episode.meta.title ?: "?", user,

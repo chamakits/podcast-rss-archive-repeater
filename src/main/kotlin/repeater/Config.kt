@@ -14,10 +14,25 @@ data class PodcastConfig(
     val id: String,
     val url: String,
     val title: String? = null,
+    // Overrides the global transcode section for this podcast when set.
+    val transcode: TranscodeConfig? = null,
 )
 
 data class UserConfig(
     val name: String,
+)
+
+data class TranscodeConfig(
+    // When true, downloaded episodes are re-encoded to save disk space
+    // (typically 50-75% smaller). Requires ffmpeg on the PATH.
+    // Episodes already in the cache are not touched.
+    val enabled: Boolean = false,
+    // "opus": best compression, plays in most podcatchers (gPodder,
+    //         AntennaPod...) but NOT in iOS/Apple Podcasts.
+    // "aac":  AAC in an m4a container, plays everywhere including iOS.
+    val codec: String = "opus",
+    // For opus, 32 is comfortable for speech; for aac use 64 or higher.
+    val bitrateKbps: Int = 32,
 )
 
 data class AppConfig(
@@ -27,6 +42,7 @@ data class AppConfig(
     val baseUrl: String? = null,
     val podcasts: List<PodcastConfig> = emptyList(),
     val users: List<UserConfig> = emptyList(),
+    val transcode: TranscodeConfig = TranscodeConfig(),
 )
 
 /**
@@ -62,6 +78,12 @@ class ConfigStore(private val dataDir: Path) {
 
         val duplicateIds = loaded.podcasts.groupBy { it.id }.filterValues { it.size > 1 }.keys
         require(duplicateIds.isEmpty()) { "Duplicate podcast ids in config: $duplicateIds" }
+        val transcodeSections = listOf("transcode" to loaded.transcode) +
+            loaded.podcasts.mapNotNull { p -> p.transcode?.let { "podcasts[${p.id}].transcode" to it } }
+        for ((where, t) in transcodeSections) {
+            require(t.codec in setOf("opus", "aac")) { "$where.codec must be \"opus\" or \"aac\", got \"${t.codec}\"" }
+            require(t.bitrateKbps in 6..510) { "$where.bitrateKbps must be between 6 and 510, got ${t.bitrateKbps}" }
+        }
 
         config = loaded
         userKeys = loadOrGenerateKeys(loaded.users)

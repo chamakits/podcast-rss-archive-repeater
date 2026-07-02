@@ -31,6 +31,8 @@ data class EpisodeMeta(
     val contentType: String,
     val sizeBytes: Long,
     val downloadedAt: String,
+    // Set when the episode was transcoded to Opus: the size as downloaded.
+    val originalSizeBytes: Long? = null,
 )
 
 data class CachedEpisode(
@@ -51,7 +53,7 @@ data class CachedEpisode(
  * Episode ids are a hash of the original enclosure URL, so they are stable
  * across restarts and feed refetches.
  */
-class EpisodeStore(dataDir: Path, private val http: HttpClient) {
+class EpisodeStore(dataDir: Path, private val http: HttpClient, private val transcoder: Transcoder) {
     private val log = LoggerFactory.getLogger(EpisodeStore::class.java)
     private val json = jacksonObjectMapper().writerWithDefaultPrettyPrinter()
     private val jsonReader = jacksonObjectMapper()
@@ -130,7 +132,8 @@ class EpisodeStore(dataDir: Path, private val http: HttpClient) {
      * Returns the cached episode, downloading it from the original source
      * first if we don't have it yet.
      */
-    fun getOrDownload(podcastId: String, episodeId: String, entry: IndexEntry): CachedEpisode {
+    fun getOrDownload(podcast: PodcastConfig, episodeId: String, entry: IndexEntry): CachedEpisode {
+        val podcastId = podcast.id
         val lock = downloadLocks.computeIfAbsent("$podcastId/$episodeId") { Any() }
         synchronized(lock) {
             if (isCached(podcastId, episodeId)) {
@@ -140,11 +143,12 @@ class EpisodeStore(dataDir: Path, private val http: HttpClient) {
                     wasAlreadyCached = true,
                 )
             }
-            return download(podcastId, episodeId, entry)
+            return download(podcast, episodeId, entry)
         }
     }
 
-    private fun download(podcastId: String, episodeId: String, entry: IndexEntry): CachedEpisode {
+    private fun download(podcast: PodcastConfig, episodeId: String, entry: IndexEntry): CachedEpisode {
+        val podcastId = podcast.id
         log.info("[{}] downloading episode {} from {}", podcastId, episodeId, entry.url)
         val startedAt = System.currentTimeMillis()
 
@@ -159,22 +163,36 @@ class EpisodeStore(dataDir: Path, private val http: HttpClient) {
             error("Origin returned HTTP ${response.statusCode()} for ${entry.url}")
         }
 
+        val originalContentType = response.headers().firstValue("Content-Type").orElse("audio/mpeg")
+        var contentType = originalContentType
+        var originalSizeBytes: Long? = null
+
+        val transcodedPartFile = podcastCacheDir(podcastId).resolve("$episodeId.transcode.part")
         try {
             response.body().use { body ->
                 Files.copy(body, partFile, StandardCopyOption.REPLACE_EXISTING)
             }
+            if (transcoder.wantsTranscode(podcast, originalContentType) &&
+                transcoder.transcode(partFile, transcodedPartFile, podcast, "$podcastId/$episodeId")
+            ) {
+                contentType = transcoder.contentTypeFor(podcast)
+                originalSizeBytes = partFile.fileSize()
+                Files.move(transcodedPartFile, partFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            }
             Files.move(partFile, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
         } catch (e: Exception) {
             Files.deleteIfExists(partFile)
+            Files.deleteIfExists(transcodedPartFile)
             throw e
         }
 
         val meta = EpisodeMeta(
             url = entry.url,
             title = entry.title,
-            contentType = response.headers().firstValue("Content-Type").orElse("audio/mpeg"),
+            contentType = contentType,
             sizeBytes = target.fileSize(),
             downloadedAt = Instant.now().toString(),
+            originalSizeBytes = originalSizeBytes,
         )
         json.writeValue(metaFile(podcastId, episodeId).toFile(), meta)
 

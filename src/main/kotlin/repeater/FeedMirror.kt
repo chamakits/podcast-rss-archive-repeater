@@ -24,6 +24,7 @@ class FeedMirror(
     private val http: HttpClient,
     private val store: EpisodeStore,
     private val artwork: ArtworkStore,
+    private val transcoder: Transcoder,
 ) {
     private val log = LoggerFactory.getLogger(FeedMirror::class.java)
 
@@ -52,10 +53,18 @@ class FeedMirror(
 
             val episodeId = EpisodeStore.episodeId(originalUrl)
             index[episodeId] = IndexEntry(url = originalUrl, title = itemTitle(enclosure))
-            enclosure.setAttribute(
-                "url",
-                "$baseUrl/media/$key/${podcast.id}/$episodeId${fileExtension(originalUrl)}"
-            )
+
+            // When transcoding is on, audio enclosures are served as Opus, so
+            // the advertised extension and MIME type must say so too. Video
+            // enclosures (and episodes cached before transcoding was enabled)
+            // pass through untouched; the /media response always carries the
+            // Content-Type of what is actually cached.
+            var extension = fileExtension(originalUrl)
+            if (transcoder.wantsTranscode(podcast, enclosure.getAttribute("type"))) {
+                extension = transcoder.extensionFor(podcast)
+                enclosure.setAttribute("type", transcoder.contentTypeFor(podcast))
+            }
+            enclosure.setAttribute("url", "$baseUrl/media/$key/${podcast.id}/$episodeId$extension")
         }
 
         val images = rewriteArtwork(document, podcast, key, baseUrl)
