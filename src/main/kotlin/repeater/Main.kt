@@ -28,6 +28,8 @@ private val EXAMPLE_CONFIG = """
 """.trimIndent() + "\n"
 
 fun main(args: Array<String>) {
+    // Artwork stamping uses AWT; make sure it never looks for a display.
+    System.setProperty("java.awt.headless", "true")
     val log = LoggerFactory.getLogger("repeater.Main")
 
     val dataDir = Path.of(args.firstOrNull() ?: "./data").toAbsolutePath().normalize()
@@ -47,8 +49,9 @@ fun main(args: Array<String>) {
         .build()
 
     val episodeStore = EpisodeStore(dataDir, http)
-    val feedMirror = FeedMirror(http, episodeStore)
+    val artworkStore = ArtworkStore(dataDir, http)
+    val feedMirror = FeedMirror(http, episodeStore, artworkStore)
 
-    Server(configStore, feedMirror, episodeStore).start(configStore.config.port)
+    Server(configStore, feedMirror, episodeStore, artworkStore).start(configStore.config.port)
     log.info("Serving data dir {} on port {}", dataDir, configStore.config.port)
 }

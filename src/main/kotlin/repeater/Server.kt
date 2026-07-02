@@ -12,6 +12,7 @@ class Server(
     private val configStore: ConfigStore,
     private val feedMirror: FeedMirror,
     private val episodeStore: EpisodeStore,
+    private val artworkStore: ArtworkStore,
 ) {
     private val log = LoggerFactory.getLogger(Server::class.java)
 
@@ -25,6 +26,7 @@ class Server(
         // Podcatcher-facing routes; the per-user key is part of the path.
         app.get("/feed/{key}/{podcastId}", ::handleFeed)
         app.get("/media/{key}/{podcastId}/{episodeFile}", ::handleMedia)
+        app.get("/logo/{key}/{podcastId}/{imageFile}", ::handleLogo)
 
         // Management API. The server runs on a private network, so these are
         // open; only the podcatcher-facing routes require a key.
@@ -52,11 +54,13 @@ class Server(
 
         val rows = configStore.config.podcasts.map { podcast ->
             val stats = episodeStore.cacheStats(podcast.id)
+            val channelImageId = key?.let { artworkStore.channelImageId(podcast.id) }
             Pages.PodcastRow(
                 id = podcast.id,
                 title = podcast.title ?: podcast.id,
                 originUrl = podcast.url,
                 feedUrl = key?.let { "$base/feed/$it/${podcast.id}" },
+                logoUrl = channelImageId?.let { "$base/logo/$key/${podcast.id}/$it.png" },
                 cachedEpisodes = stats.episodeCount,
                 cachedBytes = stats.totalBytes,
             )
@@ -109,6 +113,25 @@ class Server(
             episode.meta.contentType,
             episode.mediaFile.fileSize(),
         )
+    }
+
+    private fun handleLogo(ctx: Context) {
+        requireUser(ctx)
+        val podcast = requirePodcast(ctx)
+        val imageId = ctx.pathParam("imageFile").substringBefore('.')
+
+        var entry = artworkStore.indexEntry(podcast.id, imageId)
+        if (entry == null) {
+            feedMirror.refreshIndex(podcast)
+            entry = artworkStore.indexEntry(podcast.id, imageId)
+        }
+        if (entry == null) {
+            log.warn("[{}] no artwork with id {} in index", podcast.id, imageId)
+            throw NotFoundResponse("Unknown image: $imageId")
+        }
+
+        val art = artworkStore.getOrCreate(podcast.id, imageId, entry)
+        ctx.contentType(art.contentType).result(art.bytes)
     }
 
     // ---- management API ---------------------------------------------------

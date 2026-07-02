@@ -20,8 +20,15 @@ import javax.xml.transform.stream.StreamResult
  * Fetches the original RSS feed and rewrites every episode enclosure URL to
  * point back at this server, so the podcatcher downloads episodes through us.
  */
-class FeedMirror(private val http: HttpClient, private val store: EpisodeStore) {
+class FeedMirror(
+    private val http: HttpClient,
+    private val store: EpisodeStore,
+    private val artwork: ArtworkStore,
+) {
     private val log = LoggerFactory.getLogger(FeedMirror::class.java)
+
+    private val itunesNamespace = "http://www.itunes.com/dtds/podcast-1.0.dtd"
+    private val podcastIndexNamespace = "https://podcastindex.org/namespace/1.0"
 
     /**
      * Returns the feed XML (UTF-8 bytes) with enclosure URLs rewritten to
@@ -51,30 +58,69 @@ class FeedMirror(private val http: HttpClient, private val store: EpisodeStore) 
             )
         }
 
+        val images = rewriteArtwork(document, podcast, key, baseUrl)
+
         store.updateIndex(podcast.id, index)
-        log.info("[{}] mirrored feed with {} episode(s)", podcast.id, index.size)
+        artwork.updateIndex(podcast.id, images)
+        log.info("[{}] mirrored feed with {} episode(s), {} image(s)", podcast.id, index.size, images.size)
         return serializeXml(document)
     }
 
     /**
-     * Re-fetches the feed just to refresh the episode index. Used when a media
-     * request arrives for an episode id we don't know yet (e.g. after the
+     * Rewrites channel and item artwork ("itunes:image" and the classic RSS
+     * "image"/"url") to our /logo endpoint, which serves a stamped version so
+     * the mirror is visually distinct from the original podcast.
+     * Returns imageId -> original URL for the artwork index.
+     */
+    private fun rewriteArtwork(
+        document: Document,
+        podcast: PodcastConfig,
+        key: String,
+        baseUrl: String,
+    ): Map<String, ArtworkStore.Entry> {
+        val images = mutableMapOf<String, ArtworkStore.Entry>()
+        fun mirrorUrl(imageId: String) = "$baseUrl/logo/$key/${podcast.id}/$imageId.png"
+
+        // <itunes:image href> and <podcast:image href> work the same way.
+        for (namespace in listOf(itunesNamespace, podcastIndexNamespace)) {
+            val hrefImages = document.getElementsByTagNameNS(namespace, "image")
+            for (i in 0 until hrefImages.length) {
+                val image = hrefImages.item(i) as Element
+                val originalUrl = image.getAttribute("href")
+                if (originalUrl.isBlank()) continue
+                val imageId = EpisodeStore.episodeId(originalUrl)
+                images[imageId] = ArtworkStore.Entry(originalUrl, channel = image.parentNode.nodeName == "channel")
+                image.setAttribute("href", mirrorUrl(imageId))
+            }
+        }
+
+        val rssImages = document.getElementsByTagName("image") // plain RSS <image>, not itunes:image
+        for (i in 0 until rssImages.length) {
+            val urlElements = (rssImages.item(i) as Element).getElementsByTagName("url")
+            if (urlElements.length == 0) continue
+            val urlElement = urlElements.item(0) as Element
+            val originalUrl = urlElement.textContent.trim()
+            if (originalUrl.isBlank()) continue
+            val imageId = EpisodeStore.episodeId(originalUrl)
+            images[imageId] = ArtworkStore.Entry(originalUrl, channel = true)
+            urlElement.textContent = mirrorUrl(imageId)
+        }
+
+        return images
+    }
+
+    /**
+     * Re-fetches the feed just to refresh the episode and artwork indexes.
+     * Used when a request arrives for an id we don't know yet (e.g. after an
      * index file was deleted). Failures are logged and swallowed.
      */
     fun refreshIndex(podcast: PodcastConfig) {
         try {
-            val document = parseXml(fetchFeed(podcast))
-            val index = mutableMapOf<String, IndexEntry>()
-            val enclosures = document.getElementsByTagName("enclosure")
-            for (i in 0 until enclosures.length) {
-                val enclosure = enclosures.item(i) as Element
-                val originalUrl = enclosure.getAttribute("url")
-                if (originalUrl.isBlank()) continue
-                index[EpisodeStore.episodeId(originalUrl)] = IndexEntry(originalUrl, itemTitle(enclosure))
-            }
-            store.updateIndex(podcast.id, index)
+            // Rewrite with placeholder values and discard the output; only the
+            // index updates along the way matter here.
+            mirroredFeed(podcast, key = "unused", baseUrl = "http://unused")
         } catch (e: Exception) {
-            log.warn("[{}] could not refresh episode index: {}", podcast.id, e.message)
+            log.warn("[{}] could not refresh indexes: {}", podcast.id, e.message)
         }
     }
 

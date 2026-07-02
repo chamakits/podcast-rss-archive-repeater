@@ -10,7 +10,8 @@ object Pages {
         val id: String,
         val title: String,
         val originUrl: String,
-        val feedUrl: String?, // null when no user is selected
+        val feedUrl: String?, // null when no valid key is given
+        val logoUrl: String?, // stamped channel logo; null without a key or before first feed fetch
         val cachedEpisodes: Int,
         val cachedBytes: Long,
     )
@@ -35,15 +36,19 @@ object Pages {
                 </div>
                 """.trimIndent()
             } ?: ""
+            val logo = row.logoUrl?.let { "<img class=\"logo\" src=\"${esc(it)}\" alt=\"\">" } ?: ""
             """
             <div class="card">
-              <h2>${esc(row.title)}</h2>
-              <div class="meta">
-                id: <code>${esc(row.id)}</code>
-                &middot; ${row.cachedEpisodes} cached episode(s), ${formatBytes(row.cachedBytes)}
-                &middot; <a href="${esc(row.originUrl)}">original feed</a>
+              $logo
+              <div class="cardbody">
+                <h2>${esc(row.title)}</h2>
+                <div class="meta">
+                  id: <code>${esc(row.id)}</code>
+                  &middot; ${row.cachedEpisodes} cached episode(s), ${formatBytes(row.cachedBytes)}
+                  &middot; <a href="${esc(row.originUrl)}">original feed</a>
+                </div>
+                $feedLine
               </div>
-              $feedLine
             </div>
             """.trimIndent()
         }
@@ -102,6 +107,11 @@ object Pages {
                 "<em>links are inside the mirrored feed (opening one downloads the episode)</em>"
             ),
             Endpoint(
+                "GET", "/logo/{key}/{podcastId}/{imageId}.png",
+                "Podcast artwork with a blue border and \"MIRROR\" band stamped on, so the mirror is easy to tell apart from the original.",
+                "<em>shown on the home page and inside the mirrored feed</em>"
+            ),
+            Endpoint(
                 "GET", "/api/podcasts",
                 "JSON list of podcasts with cache stats. Add ?key=&lt;key&gt; to include mirrored feed URLs.",
                 "<a href=\"/api/podcasts$keyQuery\">open</a>"
@@ -150,8 +160,10 @@ object Pages {
           <style>
             body { font-family: system-ui, sans-serif; max-width: 46rem; margin: 2rem auto; padding: 0 1rem; color: #222; }
             h1 { font-size: 1.4rem; }
-            .card { border: 1px solid #ddd; border-radius: 8px; padding: 0.8rem 1rem; margin: 0.8rem 0; }
+            .card { border: 1px solid #ddd; border-radius: 8px; padding: 0.8rem 1rem; margin: 0.8rem 0; display: flex; gap: 0.9rem; }
             .card h2 { font-size: 1.1rem; margin: 0 0 0.3rem; }
+            .card .logo { width: 88px; height: 88px; object-fit: cover; border-radius: 6px; flex-shrink: 0; }
+            .cardbody { flex: 1; min-width: 0; }
             .meta { color: #666; font-size: 0.85rem; margin-bottom: 0.5rem; }
             .copyrow { display: flex; gap: 0.5rem; }
             .copyrow input { flex: 1; font-family: monospace; font-size: 0.85rem; padding: 0.35rem; }

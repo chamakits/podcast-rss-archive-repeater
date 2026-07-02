@@ -52,6 +52,11 @@ http://<host>:<port>/feed/<key>/<podcast-id>
 Subscribe to that in your podcatcher. Episode enclosure links inside the feed
 are rewritten to `/media/<key>/<podcast-id>/<episode-id>.mp3` automatically.
 
+Podcast artwork is rewritten to `/logo/<key>/<podcast-id>/<image-id>.png`,
+which serves the original art stamped with a blue border and a "MIRROR" band —
+so the mirror is easy to tell apart when it sits next to the original podcast
+in your podcatcher. Undecodable formats (e.g. webp) are served unstamped.
+
 ## Web UI (no key required — private network)
 
 | Method | Path | What it does |
@@ -78,6 +83,9 @@ cache/<podcast-id>/
   episodes.json                  episodeId -> original URL + title
   <episodeId>.media              cached episode audio
   <episodeId>.meta.json          origin URL, content type, size, download time
+  images.json                    imageId -> original artwork URL
+  art-<imageId>.img              cached stamped artwork
+  art-<imageId>.meta.json        origin URL + content type
 archive/<podcast-id>/            archived copies (timestamped)
 ```
 
@@ -98,4 +106,5 @@ feed refetches never change them.
 | `Config.kt` | `config.yaml` loading + user key generation |
 | `FeedMirror.kt` | Fetch origin feed, rewrite enclosure URLs |
 | `EpisodeStore.kt` | Download, cache, archive episodes (all file-based) |
+| `ArtworkStore.kt` | Download and cache artwork, stamp it with the MIRROR overlay |
 | `Server.kt` | HTTP routes (Javalin) |
