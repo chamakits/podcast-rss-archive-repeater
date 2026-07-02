@@ -30,6 +30,11 @@ private val EXAMPLE_CONFIG = """
 fun main(args: Array<String>) {
     // Artwork stamping uses AWT; make sure it never looks for a display.
     System.setProperty("java.awt.headless", "true")
+    // Podcast enclosures are often wrapped in chains of tracking redirectors
+    // (gum.fm -> podderapp -> mgln.ai -> the real CDN...) that are deeper than
+    // the JDK's default limit of 5, which makes HttpClient give up and return
+    // the last 302 as the response.
+    System.setProperty("jdk.httpclient.redirects.retrylimit", "16")
     val log = LoggerFactory.getLogger("repeater.Main")
 
     val dataDir = Path.of(args.firstOrNull() ?: "./data").toAbsolutePath().normalize()
@@ -44,7 +49,9 @@ fun main(args: Array<String>) {
     configStore.load()
 
     val http = HttpClient.newBuilder()
-        .followRedirects(HttpClient.Redirect.NORMAL)
+        // ALWAYS rather than NORMAL: some tracking redirectors hop through
+        // plain-http URLs, which NORMAL refuses to follow from https.
+        .followRedirects(HttpClient.Redirect.ALWAYS)
         .connectTimeout(Duration.ofSeconds(20))
         .build()
 
