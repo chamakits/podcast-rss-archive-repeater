@@ -86,6 +86,7 @@ object Pages {
                   <input name="title" placeholder="title (optional)">
                   <input name="id" placeholder="id (optional)">
                   <label><input type="checkbox" name="transcode"> transcode (AAC 64k, saves ~50% disk, iOS-friendly)</label>
+                  <label><input type="checkbox" name="checkLocalFirst" checked> check local first (reuse an untranscoded twin's download)</label>
                   <button>POST</button>
                 </form>
             """.trimIndent()
@@ -131,7 +132,7 @@ object Pages {
             ),
             Endpoint(
                 "POST", "/api/podcasts/add/{key}",
-                "Add a podcast to config.yaml and start mirroring it. Takes url (required), title and id (both optional; the id is derived from the title or url when omitted), and transcode=true to re-encode episodes to AAC 64k. Requires a valid user key.",
+                "Add a podcast to config.yaml and start mirroring it. Takes url (required), title and id (both optional; the id is derived from the title or url when omitted), transcode=true to re-encode episodes to AAC 64k, and checkLocalFirst (default true; with transcoding, source originals from an untranscoded entry with the same url). Requires a valid user key.",
                 addPodcastForm
             ),
             Endpoint(
@@ -225,7 +226,10 @@ object Pages {
               const value = form[name].value.trim();
               if (value) params.set(name, value);
             }
-            if (form.transcode.checked) params.set('transcode', 'true');
+            if (form.transcode.checked) {
+              params.set('transcode', 'true');
+              params.set('checkLocalFirst', form.checkLocalFirst.checked);
+            }
             post('/api/podcasts/add/' + form.key.value, params);
             return false;
           }

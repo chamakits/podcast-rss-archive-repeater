@@ -206,9 +206,13 @@ class Server(
         val title = param(ctx, "title")
         val id = param(ctx, "id") ?: deriveId(url, title)
         // "on" is what an HTML checkbox submits.
-        val transcode = param(ctx, "transcode")?.lowercase() in setOf("true", "on", "1", "yes")
+        val truthy = setOf("true", "on", "1", "yes")
+        val transcode = param(ctx, "transcode")?.lowercase() in truthy
+        // Defaults to true; only written into the config when transcoding.
+        val checkLocalFirst = (param(ctx, "checkLocalFirst") ?: param(ctx, "check-local-first"))
+            ?.let { it.lowercase() in truthy } ?: true
         val podcast = try {
-            configStore.addPodcast(id, url, title, transcode)
+            configStore.addPodcast(id, url, title, transcode, checkLocalFirst)
         } catch (e: IllegalArgumentException) {
             throw BadRequestResponse(e.message ?: "Invalid podcast")
         }
