@@ -9,6 +9,7 @@ import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import org.slf4j.LoggerFactory
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import java.security.SecureRandom
 
 data class PodcastConfig(
@@ -103,6 +104,51 @@ class ConfigStore(private val dataDir: Path) {
     }
 
     fun podcast(id: String): PodcastConfig? = config.podcasts.find { it.id == id }
+
+    /**
+     * Appends a podcast to config.yaml and reloads. The entry is inserted
+     * right below the `podcasts:` line (or a new section is added at the end
+     * if there is none) so the hand-edited file keeps its comments and
+     * layout. The candidate content is parsed and validated before it
+     * replaces the file, so a bad insert can never corrupt the config.
+     */
+    @Synchronized
+    fun addPodcast(id: String, url: String, title: String?): PodcastConfig {
+        require(id.matches(Regex("[a-z0-9][a-z0-9-]*"))) {
+            "id must be lowercase letters, digits and dashes, got '$id'"
+        }
+
+        val entryLines = mutableListOf("  - id: $id", "    url: ${quote(url)}")
+        if (title != null) entryLines += "    title: ${quote(title)}"
+
+        val original = Files.readString(configFile)
+        val originalParsed = yaml.readValue<AppConfig>(original)
+        require(originalParsed.podcasts.none { it.id == id }) { "A podcast with id '$id' already exists" }
+
+        val lines = original.lines()
+        val sectionAt = lines.indexOfFirst { it.matches(Regex("""podcasts:\s*(#.*)?""")) }
+        val updated = (
+            if (sectionAt >= 0) lines.take(sectionAt + 1) + entryLines + lines.drop(sectionAt + 1)
+            else lines + listOf("", "podcasts:") + entryLines
+            ).joinToString("\n")
+
+        val parsed = yaml.readValue<AppConfig>(updated)
+        check(parsed.podcasts.size == originalParsed.podcasts.size + 1 &&
+            parsed.podcasts.any { it.id == id && it.url == url }) {
+            "Could not insert into $configFile automatically - please add the podcast by hand"
+        }
+
+        val temp = configFile.resolveSibling("config.yaml.tmp")
+        Files.writeString(temp, updated)
+        Files.move(temp, configFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        load()
+        log.info("Added podcast '{}' ({}) to {}", id, url, configFile)
+        return podcast(id)!!
+    }
+
+    /** YAML-safe double-quoted scalar for user-supplied values. */
+    private fun quote(value: String) =
+        "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
     /** Returns the user name that owns this key, or null if the key is unknown. */
     fun userForKey(key: String): String? =

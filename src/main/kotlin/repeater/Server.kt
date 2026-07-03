@@ -1,11 +1,13 @@
 package repeater
 
 import io.javalin.Javalin
+import io.javalin.http.BadRequestResponse
 import io.javalin.http.Context
 import io.javalin.http.NotFoundResponse
 import io.javalin.http.UnauthorizedResponse
 import org.slf4j.LoggerFactory
 import java.io.FileInputStream
+import java.net.URI
 import kotlin.io.path.fileSize
 
 class Server(
@@ -37,6 +39,9 @@ class Server(
         // Management API. The server runs on a private network, so these are
         // open; only the podcatcher-facing routes require a key.
         app.get("/api/podcasts", ::handleListPodcasts)
+        // Exception: adding a podcast writes to config.yaml, so it requires
+        // a valid user key like the podcatcher-facing routes.
+        app.post("/api/podcasts/add/{key}", ::handleAddPodcast)
         app.get("/api/podcasts/{podcastId}/episodes", ::handleListEpisodes)
         app.post("/api/archive/{podcastId}/{episodeId}", ::handleArchive)
         app.post("/api/reload", ::handleReload)
@@ -184,6 +189,51 @@ class Server(
                 "note" to "Next client download will re-fetch from the original source.",
             )
         )
+    }
+
+    private fun handleAddPodcast(ctx: Context) {
+        val user = requireUser(ctx)
+        val url = param(ctx, "url") ?: throw BadRequestResponse("Missing 'url' parameter")
+        val scheme = try {
+            URI.create(url).scheme?.lowercase()
+        } catch (e: IllegalArgumentException) {
+            null
+        }
+        if (scheme != "http" && scheme != "https") {
+            throw BadRequestResponse("'url' must be an http(s) URL, got '$url'")
+        }
+
+        val title = param(ctx, "title")
+        val id = param(ctx, "id") ?: deriveId(url, title)
+        val podcast = try {
+            configStore.addPodcast(id, url, title)
+        } catch (e: IllegalArgumentException) {
+            throw BadRequestResponse(e.message ?: "Invalid podcast")
+        }
+
+        log.info("User '{}' added podcast '{}' ({})", user, podcast.id, podcast.url)
+        ctx.json(
+            mapOf(
+                "id" to podcast.id,
+                "url" to podcast.url,
+                "title" to podcast.title,
+                "mirroredRssUrl" to "${baseUrl(ctx)}/feed/${ctx.pathParam("key")}/${podcast.id}",
+            )
+        )
+    }
+
+    /** Reads a parameter from the form body, falling back to the query string. */
+    private fun param(ctx: Context, name: String): String? =
+        (ctx.formParam(name) ?: ctx.queryParam(name))?.trim()?.takeIf { it.isNotEmpty() }
+
+    /** "My Favorite Show" -> "my-favorite-show"; falls back to the URL's last path segment or host. */
+    private fun deriveId(url: String, title: String?): String {
+        val uri = URI.create(url)
+        val basis = title
+            ?: uri.path?.trim('/')?.substringAfterLast('/')?.takeIf { it.isNotEmpty() }
+            ?: uri.host
+            ?: "podcast"
+        return basis.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-').ifEmpty { "podcast" }
     }
 
     private fun handleReload(ctx: Context) {

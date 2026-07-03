@@ -77,6 +77,18 @@ object Pages {
             if (key == null) "<em>add ?key=&lt;your-key&gt; to this page to get links</em>"
             else perPodcastLinks { "/feed/$key/$it" }
 
+        val addPodcastForm =
+            if (key == null) "<em>add ?key=&lt;your-key&gt; to this page to enable</em>"
+            else """
+                <form onsubmit="return postAddPodcast(this)">
+                  <input type="hidden" name="key" value="${esc(key)}">
+                  <input name="url" type="url" placeholder="https://example.com/feed.xml" required>
+                  <input name="title" placeholder="title (optional)">
+                  <input name="id" placeholder="id (optional)">
+                  <button>POST</button>
+                </form>
+            """.trimIndent()
+
         val archiveForm = """
             <form onsubmit="return postArchive(this)">
               <select name="podcastId">${podcastIds.joinToString("") { "<option>${esc(it)}</option>" }}</select>
@@ -115,6 +127,11 @@ object Pages {
                 "GET", "/api/podcasts",
                 "JSON list of podcasts with cache stats. Add ?key=&lt;key&gt; to include mirrored feed URLs.",
                 "<a href=\"/api/podcasts$keyQuery\">open</a>"
+            ),
+            Endpoint(
+                "POST", "/api/podcasts/add/{key}",
+                "Add a podcast to config.yaml and start mirroring it. Takes url (required), title and id (both optional; the id is derived from the title or url when omitted). Requires a valid user key.",
+                addPodcastForm
             ),
             Endpoint(
                 "GET", "/api/podcasts/{podcastId}/episodes",
@@ -191,13 +208,22 @@ object Pages {
             button.textContent = 'Copied!';
             setTimeout(() => button.textContent = 'Copy', 1500);
           }
-          async function post(url) {
-            const response = await fetch(url, { method: 'POST' });
+          async function post(url, body) {
+            const response = await fetch(url, { method: 'POST', body });
             document.getElementById('result').textContent =
               'POST ' + url + '\n' + response.status + ' ' + await response.text();
           }
           function postArchive(form) {
             post('/api/archive/' + form.podcastId.value + '/' + form.episodeId.value.trim());
+            return false;
+          }
+          function postAddPodcast(form) {
+            const params = new URLSearchParams();
+            for (const name of ['url', 'title', 'id']) {
+              const value = form[name].value.trim();
+              if (value) params.set(name, value);
+            }
+            post('/api/podcasts/add/' + form.key.value, params);
             return false;
           }
         </script>
