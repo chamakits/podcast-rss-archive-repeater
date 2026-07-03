@@ -113,13 +113,19 @@ class ConfigStore(private val dataDir: Path) {
      * replaces the file, so a bad insert can never corrupt the config.
      */
     @Synchronized
-    fun addPodcast(id: String, url: String, title: String?): PodcastConfig {
+    fun addPodcast(id: String, url: String, title: String?, transcode: Boolean = false): PodcastConfig {
         require(id.matches(Regex("[a-z0-9][a-z0-9-]*"))) {
             "id must be lowercase letters, digits and dashes, got '$id'"
         }
 
         val entryLines = mutableListOf("  - id: $id", "    url: ${quote(url)}")
         if (title != null) entryLines += "    title: ${quote(title)}"
+        if (transcode) {
+            entryLines += "    transcode:"
+            entryLines += "      enabled: true"
+            entryLines += "      codec: aac       # AAC-LC in m4a: plays natively on iOS/Apple Podcasts"
+            entryLines += "      bitrateKbps: 64  # ~half the size of the usual 128 kbps MP3"
+        }
 
         val original = Files.readString(configFile)
         val originalParsed = yaml.readValue<AppConfig>(original)
@@ -134,7 +140,7 @@ class ConfigStore(private val dataDir: Path) {
 
         val parsed = yaml.readValue<AppConfig>(updated)
         check(parsed.podcasts.size == originalParsed.podcasts.size + 1 &&
-            parsed.podcasts.any { it.id == id && it.url == url }) {
+            parsed.podcasts.any { it.id == id && it.url == url && (it.transcode?.enabled == true) == transcode }) {
             "Could not insert into $configFile automatically - please add the podcast by hand"
         }
 

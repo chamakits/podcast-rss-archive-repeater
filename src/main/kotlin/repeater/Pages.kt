@@ -85,6 +85,7 @@ object Pages {
                   <input name="url" type="url" placeholder="https://example.com/feed.xml" required>
                   <input name="title" placeholder="title (optional)">
                   <input name="id" placeholder="id (optional)">
+                  <label><input type="checkbox" name="transcode"> transcode (AAC 64k, saves ~50% disk, iOS-friendly)</label>
                   <button>POST</button>
                 </form>
             """.trimIndent()
@@ -130,7 +131,7 @@ object Pages {
             ),
             Endpoint(
                 "POST", "/api/podcasts/add/{key}",
-                "Add a podcast to config.yaml and start mirroring it. Takes url (required), title and id (both optional; the id is derived from the title or url when omitted). Requires a valid user key.",
+                "Add a podcast to config.yaml and start mirroring it. Takes url (required), title and id (both optional; the id is derived from the title or url when omitted), and transcode=true to re-encode episodes to AAC 64k. Requires a valid user key.",
                 addPodcastForm
             ),
             Endpoint(
@@ -190,6 +191,7 @@ object Pages {
             .tryit a { margin-right: 0.5rem; white-space: nowrap; }
             .tryit form { display: flex; gap: 0.3rem; flex-wrap: wrap; }
             .tryit input { width: 9rem; }
+            .tryit label { font-size: 0.85rem; color: #444; }
             .tryit em { color: #666; }
             #result { background: #f6f6f6; padding: 0.6rem; white-space: pre-wrap; word-break: break-all; }
             #result:empty { display: none; }
@@ -223,6 +225,7 @@ object Pages {
               const value = form[name].value.trim();
               if (value) params.set(name, value);
             }
+            if (form.transcode.checked) params.set('transcode', 'true');
             post('/api/podcasts/add/' + form.key.value, params);
             return false;
           }

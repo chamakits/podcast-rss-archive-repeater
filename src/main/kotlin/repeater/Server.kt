@@ -205,18 +205,22 @@ class Server(
 
         val title = param(ctx, "title")
         val id = param(ctx, "id") ?: deriveId(url, title)
+        // "on" is what an HTML checkbox submits.
+        val transcode = param(ctx, "transcode")?.lowercase() in setOf("true", "on", "1", "yes")
         val podcast = try {
-            configStore.addPodcast(id, url, title)
+            configStore.addPodcast(id, url, title, transcode)
         } catch (e: IllegalArgumentException) {
             throw BadRequestResponse(e.message ?: "Invalid podcast")
         }
 
-        log.info("User '{}' added podcast '{}' ({})", user, podcast.id, podcast.url)
+        log.info("User '{}' added podcast '{}' ({}){}", user, podcast.id, podcast.url,
+            if (transcode) " with aac transcoding" else "")
         ctx.json(
             mapOf(
                 "id" to podcast.id,
                 "url" to podcast.url,
                 "title" to podcast.title,
+                "transcode" to podcast.transcode,
                 "mirroredRssUrl" to "${baseUrl(ctx)}/feed/${ctx.pathParam("key")}/${podcast.id}",
             )
         )

@@ -117,7 +117,7 @@ next request. Undecodable formats (e.g. webp) are served unstamped.
 | Method | Path | What it does |
 |---|---|---|
 | GET | `/api/podcasts` | List podcasts with origin URL and cache stats. Add `?key=<your-key>` to include ready-to-paste mirrored feed URLs. |
-| POST | `/api/podcasts/add/{key}` | Add a podcast to `config.yaml` and start mirroring it. Params (form or query): `url` (required), `title`, `id` (optional; derived from title/url when omitted). **Requires a valid user key** since it writes to the config; the entry is inserted under the `podcasts:` line, keeping comments intact. Also available as a form on `/endpoints?key=...`. |
+| POST | `/api/podcasts/add/{key}` | Add a podcast to `config.yaml` and start mirroring it. Params (form or query): `url` (required), `title`, `id` (optional; derived from title/url when omitted), `transcode=true` (optional; adds a `transcode:` block with AAC 64k, the iOS-friendly default). **Requires a valid user key** since it writes to the config; the entry is inserted under the `podcasts:` line, keeping comments intact. Also available as a form on `/endpoints?key=...`. |
 | GET | `/api/podcasts/{id}/episodes` | List known episodes with their `episodeId` and whether they are cached. |
 | POST | `/api/archive/{id}/{episodeId}` | Move the cached copy to `<data-dir>/archive/<id>/<timestamp>-<episodeId>.media`. The next client download re-fetches from the original source. |
 | POST | `/api/reload` | Reload `config.yaml` (new podcasts, new users → new keys). |
