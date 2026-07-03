@@ -33,6 +33,9 @@ private val EXAMPLE_CONFIG = """
       #     enabled: true
       #     codec: aac
       #     bitrateKbps: 64
+      #     checkLocalFirst: true  # source originals from an untranscoded
+      #                            # entry with the same url instead of
+      #                            # downloading again
 
     users:
       # The server generates a key per user into generated/user-keys.yaml.
@@ -75,7 +78,7 @@ fun main(args: Array<String>) {
         log.info("Transcoding enabled: new episodes are re-encoded per the transcode config")
     }
 
-    val episodeStore = EpisodeStore(dataDir, http, transcoder)
+    val episodeStore = EpisodeStore(dataDir, http, transcoder, configStore)
     val artworkStore = ArtworkStore(dataDir, http, transcoder)
     val feedMirror = FeedMirror(http, episodeStore, artworkStore, transcoder)
 

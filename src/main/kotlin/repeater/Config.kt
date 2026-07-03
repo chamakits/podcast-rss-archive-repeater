@@ -1,5 +1,6 @@
 package repeater
 
+import com.fasterxml.jackson.annotation.JsonAlias
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory
@@ -33,6 +34,14 @@ data class TranscodeConfig(
     val codec: String = "opus",
     // For opus, 32 is comfortable for speech; for aac use 64 or higher.
     val bitrateKbps: Int = 32,
+    // When true, a transcoded podcast looks for another configured podcast
+    // with the same url and no transcoding, and sources episodes from that
+    // podcast's cache (downloading into it if needed) instead of fetching
+    // its own copy - one origin download serves both feeds. When false (the
+    // default), it downloads independently and keeps only the transcoded
+    // file.
+    @JsonAlias("check-local-first")
+    val checkLocalFirst: Boolean = false,
 )
 
 data class AppConfig(

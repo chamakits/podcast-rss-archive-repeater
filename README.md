@@ -60,6 +60,20 @@ global one for that podcast. Mirroring the same origin URL under two ids
 Mirrored feeds advertise transcoded enclosures as `.opus`/`audio/ogg` or
 `.m4a`/`audio/mp4` accordingly.
 
+With `checkLocalFirst: true` (also accepted as `check-local-first`), a
+transcoded podcast sources originals from another configured podcast with
+the same `url` and no transcoding, instead of downloading its own copy:
+
+- Original already in that podcast's cache → no origin download; the local
+  copy is transcoded into the transcoded podcast's cache.
+- Not cached yet → the original is downloaded **into the untranscoded
+  podcast's cache** (where it stays, serving that feed) and then transcoded.
+- No untranscoded podcast shares the url → logged warning, then a normal
+  direct download.
+
+With the default `checkLocalFirst: false`, each transcoded podcast downloads
+independently and keeps only the transcoded file.
+
 It degrades safely: if ffmpeg is missing, a transcode fails, or the result
 is not smaller than the original, the episode is cached in its original
 format instead. Already-cached episodes are never touched — only new

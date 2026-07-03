@@ -53,7 +53,12 @@ data class CachedEpisode(
  * Episode ids are a hash of the original enclosure URL, so they are stable
  * across restarts and feed refetches.
  */
-class EpisodeStore(dataDir: Path, private val http: HttpClient, private val transcoder: Transcoder) {
+class EpisodeStore(
+    dataDir: Path,
+    private val http: HttpClient,
+    private val transcoder: Transcoder,
+    private val configStore: ConfigStore,
+) {
     private val log = LoggerFactory.getLogger(EpisodeStore::class.java)
     private val json = jacksonObjectMapper().writerWithDefaultPrettyPrinter()
     private val jsonReader = jacksonObjectMapper()
@@ -147,8 +152,28 @@ class EpisodeStore(dataDir: Path, private val http: HttpClient, private val tran
         }
     }
 
+    /**
+     * The configured podcast that mirrors the same origin url without
+     * transcoding, if any - the source of originals for checkLocalFirst.
+     */
+    private fun untranscodedTwin(podcast: PodcastConfig): PodcastConfig? =
+        configStore.config.podcasts.find {
+            it.id != podcast.id && it.url == podcast.url && !transcoder.settingsFor(it).enabled
+        }
+
     private fun download(podcast: PodcastConfig, episodeId: String, entry: IndexEntry): CachedEpisode {
         val podcastId = podcast.id
+
+        val settings = transcoder.settingsFor(podcast)
+        if (settings.enabled && settings.checkLocalFirst) {
+            val twin = untranscodedTwin(podcast)
+            if (twin != null) return transcodeFromTwin(podcast, twin, episodeId, entry)
+            log.warn(
+                "[{}] checkLocalFirst is set but no untranscoded podcast in the config shares url {} - downloading directly",
+                podcastId, podcast.url
+            )
+        }
+
         log.info("[{}] downloading episode {} from {}", podcastId, episodeId, entry.url)
         val startedAt = System.currentTimeMillis()
 
@@ -200,6 +225,66 @@ class EpisodeStore(dataDir: Path, private val http: HttpClient, private val tran
             "[{}] cached episode {} ({} bytes in {} ms)",
             podcastId, episodeId, meta.sizeBytes, System.currentTimeMillis() - startedAt
         )
+        return CachedEpisode(mediaFile = target, meta = meta, wasAlreadyCached = false)
+    }
+
+    /**
+     * Sources the episode from the untranscoded twin's cache instead of the
+     * origin: reuses the twin's copy when cached, otherwise downloads into
+     * the twin's cache (where it stays, serving the twin's feed), then
+     * transcodes it into this podcast's cache.
+     *
+     * Nesting getOrDownload here is deadlock-free: a transcoded podcast
+     * takes the twin's lock while holding its own, but never the reverse -
+     * the twin's downloads never touch a transcoded podcast's lock.
+     */
+    private fun transcodeFromTwin(
+        podcast: PodcastConfig,
+        twin: PodcastConfig,
+        episodeId: String,
+        entry: IndexEntry,
+    ): CachedEpisode {
+        val raw = getOrDownload(twin, episodeId, entry)
+        log.info(
+            "[{}] sourcing episode {} from '{}' cache instead of re-downloading",
+            podcast.id, episodeId, twin.id
+        )
+
+        Files.createDirectories(podcastCacheDir(podcast.id))
+        val target = mediaFile(podcast.id, episodeId)
+        val partFile = podcastCacheDir(podcast.id).resolve("$episodeId.part")
+        val transcodedPartFile = podcastCacheDir(podcast.id).resolve("$episodeId.transcode.part")
+
+        var contentType = raw.meta.contentType
+        var originalSizeBytes: Long? = null
+        try {
+            if (transcoder.wantsTranscode(podcast, raw.meta.contentType) &&
+                transcoder.transcode(raw.mediaFile, transcodedPartFile, podcast, "${podcast.id}/$episodeId")
+            ) {
+                contentType = transcoder.contentTypeFor(podcast)
+                originalSizeBytes = raw.mediaFile.fileSize()
+                Files.move(transcodedPartFile, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            } else {
+                // Transcode failed or doesn't apply: serve the same bytes as the twin.
+                Files.copy(raw.mediaFile, partFile, StandardCopyOption.REPLACE_EXISTING)
+                Files.move(partFile, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            }
+        } catch (e: Exception) {
+            Files.deleteIfExists(partFile)
+            Files.deleteIfExists(transcodedPartFile)
+            throw e
+        }
+
+        val meta = EpisodeMeta(
+            url = entry.url,
+            title = entry.title,
+            contentType = contentType,
+            sizeBytes = target.fileSize(),
+            downloadedAt = Instant.now().toString(),
+            originalSizeBytes = originalSizeBytes,
+        )
+        json.writeValue(metaFile(podcast.id, episodeId).toFile(), meta)
+        log.info("[{}] cached episode {} ({} bytes, from local original)", podcast.id, episodeId, meta.sizeBytes)
         return CachedEpisode(mediaFile = target, meta = meta, wasAlreadyCached = false)
     }
 
